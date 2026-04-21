@@ -1,21 +1,21 @@
 # openclaw-weixin-sdk
 
-LangChat Team 维护的腾讯 OpenClaw Weixin Java 协议 SDK。
+Java SDK for Tencent OpenClaw Weixin protocol, maintained by LangChat Team.
 
-- Maven 坐标：`cn.langchat.openclaw:openclaw-weixin-sdk:0.1.0-SNAPSHOT`
-- 运行环境：`JDK 17+`
-- 设计原则：以协议传输为核心，依赖尽量收敛，协议状态本地持久化
+- Maven: `cn.langchat.openclaw:openclaw-weixin-sdk:0.1.0-SNAPSHOT`
+- Runtime: `JDK 17+`
+- SDK policy: protocol-focused, low dependency footprint, local state persistence for account/session context
 
-## SDK 覆盖范围
+## What This SDK Covers
 
-- 核心 HTTP 接口：`getupdates`、`sendmessage`、`getuploadurl`、`getconfig`、`sendtyping`
-- 二维码登录链路：`get_bot_qrcode`、`get_qrcode_status`、轮询超时与刷新处理
-- 长轮询监听与会话守卫（`errcode=-14` 冷却）
-- `context_token` 与同步游标持久化
-- CDN 媒体上传/下载与 AES-128-ECB 加解密辅助
-- 通过 `sendTextStream` 提供分片流式发送能力
+- Core HTTP APIs: `getupdates`, `sendmessage`, `getuploadurl`, `getconfig`, `sendtyping`
+- QR login flow: `get_bot_qrcode`, `get_qrcode_status`, timeout polling, refresh handling
+- Long-poll monitor with session guard (`errcode=-14` cooldown handling)
+- Context token persistence and sync cursor persistence
+- CDN media upload/download with AES-128-ECB helpers
+- Chunk-based stream-like sending via `sendTextStream`
 
-## 传输架构（ASCII）
+## Transport Architecture (ASCII)
 
 ```text
                                +----------------------------------+
@@ -47,24 +47,24 @@ LangChat Team 维护的腾讯 OpenClaw Weixin Java 协议 SDK。
                                 | FileAccountStore                    |
                                 | FileContextTokenStore               |
                                 | FileSyncCursorStore                 |
-                                | 默认: ~/.openclaw/openclaw-weixin    |
+                                | default: ~/.openclaw/openclaw-weixin|
                                 +-------------------------------------+
 ```
 
-## 状态与持久化说明
+## State and Persistence
 
-SDK 不是纯无状态客户端，会落盘协议运行所需状态，用于断线恢复与上下文连续性：
+The SDK is not stateless. It persists protocol-related state to make reconnect and continuation reliable:
 
-- 账号信息与账号索引
-- 会话对象维度的 `context_token`
-- 账号维度的 `get_updates_buf` 同步游标
+- account credentials and account index
+- `context_token` per peer
+- `get_updates_buf` sync cursor per account
 
-默认状态目录：
+Default state root:
 
 - `~/.openclaw/openclaw-weixin`
-- 可通过环境变量覆盖：`OPENCLAW_STATE_DIR`（兼容变量 `CLAWDBOT_STATE_DIR`）
+- override by env: `OPENCLAW_STATE_DIR` (or compatibility env `CLAWDBOT_STATE_DIR`)
 
-## 快速开始
+## Quick Start
 
 ```java
 import cn.langchat.openclaw.weixin.OpenClawWeixinSdk;
@@ -77,7 +77,7 @@ OpenClawWeixinSdk sdk = new OpenClawWeixinSdk(
 );
 
 var session = sdk.qrFlow().start(null, null, false);
-System.out.println("二维码链接: " + session.qrcodeUrl());
+System.out.println("QR URL: " + session.qrcodeUrl());
 
 var result = sdk.qrFlow().waitForConfirm(
     session.sessionKey(),
@@ -92,17 +92,17 @@ if (result.connected()) {
 }
 ```
 
-## 事件监听（链式调用）
+## Event-Driven Monitor (Fluent)
 
 ```java
 String accountId = result.accountId();
 
 var stream = sdk.monitorStream(accountId)
     .onStart(() -> System.out.println("monitor started"))
-    .onMessage(msg -> System.out.println("收到消息: " + msg.textBody()))
+    .onMessage(msg -> System.out.println("inbound: " + msg.textBody()))
     .onEvent(event -> {
         if (event.hasMedia()) {
-            System.out.println("媒体已保存: " + event.localMediaPath());
+            System.out.println("media saved: " + event.localMediaPath());
         }
     })
     .onLog((level, line) -> {
@@ -114,28 +114,37 @@ var stream = sdk.monitorStream(accountId)
     .onStop(() -> System.out.println("monitor stopped"))
     .startAsync();
 
-// 后续停止:
+// later:
 stream.stop().awaitStop(java.time.Duration.ofSeconds(3));
 ```
 
-说明：
+Notes:
 
-- 本 SDK 的 `sendTextStream(...)` 是“分片发送文本”，不是 LLM token 级回调。
-- OpenClaw Weixin 协议本身不提供 `onPartialToolCall` 这类模型/工具执行事件。
+- `sendTextStream(...)` in this SDK means chunk-based outbound sending, not LLM token callbacks.
+- OpenClaw Weixin protocol itself does not provide `onPartialToolCall`-style model/tool events.
 
-## 构建
+## Preview
+
+![iShot_2026-04-21_15.27.29](http://cdn.langchat.cn/langchat/imgs/20260421152817512.png)
+
+![iShot_2026-04-21_15.26.47](http://cdn.langchat.cn/langchat/imgs/20260421152827745.png)
+
+![iShot_2026-04-21_15.27.01](http://cdn.langchat.cn/langchat/imgs/20260421152834152.png)
+
+
+## Build
 
 ```bash
 mvn -q -DskipTests compile
 ```
 
-## 项目边界
+## Project Boundaries
 
-- SDK 只负责协议传输、登录流程、监听与媒体链路。
-- SDK 模块不再包含终端 CLI/TUI 入口代码，也不放 shell 启动脚本。
-- 终端交互由 仓库独立 CLI 项目提供：`../openclaw-weixin-cli`。
-- 使用示例与测试由模块提供：`../openclaw-weixin-examples`。
+- This SDK focuses on protocol transport, login flow, monitor, and media pipeline.
+- SDK module does not include terminal CLI/TUI entry code or shell launcher scripts.
+- Terminal interaction is provided by repository CLI project: `../openclaw-weixin-cli`.
+- Usage examples and tests are provided by: `../openclaw-weixin-examples`.
 
-## 边界约束
+## Scope Boundary
 
-- 业务层的会话历史、知识存储、工作流编排应由上层应用实现。
+- Product-level chat memory, business history, and workflow orchestration should stay in upper-layer applications.

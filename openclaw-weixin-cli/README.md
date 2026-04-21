@@ -1,29 +1,29 @@
 # openclaw-weixin-cli
 
-Standalone terminal chat client built by LangChat Team, powered by `openclaw-weixin-sdk`.
+LangChat Team 实现的独立终端聊天工具，底层依赖 `openclaw-weixin-sdk`。
 
-- Module: `openclaw-weixin-cli`
-- Runtime: `JDK 17+`
-- UI stack: TamboUI + JLine backend
+- 模块名：`openclaw-weixin-cli`
+- 运行环境：`JDK 17+`
+- UI 技术栈：TamboUI + JLine backend
 
-## Positioning
+## 项目定位
 
-This project is intentionally separated from the SDK:
+该项目与 SDK 拆分维护：
 
-- SDK provides protocol transport and state handling
-- CLI provides interactive terminal UX
-- the CLI module can serve as both production tool and SDK example application
+- SDK 负责协议传输与状态管理
+- CLI 负责交互体验与终端界面
+- CLI 既可独立发布，也可作为 SDK 示例工程
 
-## Architecture
+## 架构关系
 
 ```text
 +-------------------------------+
 | openclaw-weixin-cli   |
 |-------------------------------|
-| TUI state machine             |
-| account picker / QR login     |
-| slash commands / input box    |
-| monitor events -> chat panel  |
+| TUI 状态机                    |
+| 账号选择 / 扫码登录            |
+| 命令面板 / 底部输入框          |
+| monitor 事件 -> 聊天区         |
 +---------------+---------------+
                 |
                 v
@@ -37,31 +37,40 @@ This project is intentionally separated from the SDK:
 +-------------------------------+
 ```
 
-## Features
+## 功能特性
 
-- Full-screen terminal app (alternate screen mode)
-- Startup account selection in TUI
-- In-TUI QR code rendering for login
-- Split layout: main conversation area + side log area
-- Fixed input box at bottom
-- Slash command suggestion when typing `/`
-- Typing status synchronization (`sendtyping`)
-- Monitor loop for inbound messages and media notifications
+- 全屏终端模式（alternate screen）
+- 启动后在 TUI 内选择账号
+- 在 TUI 内渲染二维码并扫码登录
+- 中心区分栏：主对话区 + 侧边日志区
+- 底部固定输入框
+- 输入 `/` 自动展开命令建议
+- 输入中状态联动（`sendtyping`）
+- 后台 monitor 长轮询接收消息与媒体通知
 
-## Build
+## Preview
+
+![iShot_2026-04-21_15.27.29](http://cdn.langchat.cn/langchat/imgs/20260421152817512.png)
+
+![iShot_2026-04-21_15.26.47](http://cdn.langchat.cn/langchat/imgs/20260421152827745.png)
+
+![iShot_2026-04-21_15.27.01](http://cdn.langchat.cn/langchat/imgs/20260421152834152.png)
+
+
+## 构建
 
 ```bash
 mvn -DskipTests -pl openclaw-weixin-cli -am package
 ```
 
-Generated artifacts:
+构建产物：
 
 - `target/openclaw-weixin-cli-<version>.jar`
 - `target/openclaw-weixin-cli-<version>-all.jar`
 
-## Run
+## 运行
 
-From repository root:
+在仓库根目录执行：
 
 ```bash
 ./bin/openclaw-weixin chat
@@ -70,13 +79,13 @@ From repository root:
 ./bin/openclaw-weixin help
 ```
 
-Or directly by jar:
+或者直接运行 fat-jar：
 
 ```bash
 java -jar target/openclaw-weixin-cli-0.1.0-all.jar chat
 ```
 
-## Chat Commands
+## 聊天命令
 
 - `/help`
 - `/users`
@@ -87,16 +96,16 @@ java -jar target/openclaw-weixin-cli-0.1.0-all.jar chat
 - `/clear`
 - `/quit`
 
-## Keybindings
+## 快捷键
 
-- `Enter`: send message / confirm current action
-- `Ctrl+Enter`: append new line in chat draft
-- `Esc`: clear current input
-- `Ctrl+L`: clear chat + log panes
-- `Ctrl+C`: quit
+- `Enter`：发送消息 / 确认当前操作
+- `Ctrl+Enter`：追加一行换行输入
+- `Esc`：清空当前输入
+- `Ctrl+L`：清空聊天区和日志区
+- `Ctrl+C`：退出
 
-## Troubleshooting
+## 故障排查
 
-- If no peer is selected, run `/to <userId@im.wechat>` first.
-- If login state is stale, run `/logout` then `/login`.
-- If you need clean state, set `OPENCLAW_STATE_DIR` to an isolated directory before startup.
+- 如果没有会话对象，先执行 `/to <userId@im.wechat>`。
+- 如果登录状态异常，先 `/logout` 再 `/login`。
+- 如需隔离本地状态，可在启动前设置 `OPENCLAW_STATE_DIR`。

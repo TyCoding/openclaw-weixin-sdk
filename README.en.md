@@ -186,11 +186,14 @@ npm install
 npm run dev
 ```
 
-## 8. Publish to Maven Central
+## 8. Preview
 
-```bash
-./bin/publish-openclaw-weixin-sdk
-```
+![iShot_2026-04-21_15.27.29](http://cdn.langchat.cn/langchat/imgs/20260421152817512.png)
+
+![iShot_2026-04-21_15.26.47](http://cdn.langchat.cn/langchat/imgs/20260421152827745.png)
+
+![iShot_2026-04-21_15.27.01](http://cdn.langchat.cn/langchat/imgs/20260421152834152.png)
+
 
 ## 9. Boundary
 

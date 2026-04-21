@@ -218,19 +218,13 @@ npm install
 npm run dev
 ```
 
-## 8. 自动化发布 Maven Central
+## 8. Preview
 
-```bash
-./bin/publish-openclaw-weixin-sdk
-```
+![iShot_2026-04-21_15.27.29](http://cdn.langchat.cn/langchat/imgs/20260421152817512.png)
 
-常用参数：
+![iShot_2026-04-21_15.26.47](http://cdn.langchat.cn/langchat/imgs/20260421152827745.png)
 
-- `--no-skip-tests`
-- `--retry N`
-- `--settings <path>`
-- `--mvn <path>`
-- `--server-id <id>`
+![iShot_2026-04-21_15.27.01](http://cdn.langchat.cn/langchat/imgs/20260421152834152.png)
 
 ## 9. 边界说明
 

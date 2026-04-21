@@ -37,6 +37,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -74,15 +75,20 @@ public final class WeixinCliApp {
     private static final Color PANEL_BORDER_FOCUS = Color.rgb(120, 183, 255);
     private static final Color HEADER_BORDER = Color.rgb(78, 88, 102);
     private static final Color LOG_BORDER = Color.rgb(72, 82, 95);
+    private static final Color CONTEXT_BORDER = Color.rgb(76, 94, 122);
     private static final Color COMMAND_BORDER = Color.rgb(82, 100, 128);
     private static final Color INPUT_BORDER = Color.rgb(96, 126, 170);
     private static final int CHAT_WRAP_WIDTH = 72;
     private static final int INBOUND_SEPARATOR_WIDTH = 300;
+    private static final int CONVERSATION_MAX_MESSAGES = 200;
+    private static final String LOCAL_CONTEXT_PREFIX = "ctx-";
 
     private static final List<SlashCommand> CHAT_COMMANDS = List.of(
         new SlashCommand("/help", "显示帮助"),
         new SlashCommand("/users", "查看已发现会话对象"),
-        new SlashCommand("/to <userId@im.wechat>", "切换会话对象"),
+        new SlashCommand("/new [窗口名]", "创建当前账号的本地上下文窗口"),
+        new SlashCommand("/to <userId@im.wechat>", "设置当前窗口的发送目标(或切换目标会话)"),
+        new SlashCommand("/ctx [序号|contextId]", "从上下文面板切换会话对象"),
         new SlashCommand("/media <path|url> [caption]", "发送媒体"),
         new SlashCommand("/login", "重新扫码登录"),
         new SlashCommand("/logout", "注销当前账号"),
@@ -92,10 +98,17 @@ public final class WeixinCliApp {
 
     private final OpenClawWeixinCli.LaunchContext launch;
     private final FileAccountStore accountStore = new FileAccountStore();
+    private final FileConversationStore conversationStore = new FileConversationStore();
 
     private final List<ChatBubble> chatLines = new ArrayList<>();
     private final List<UiLine> logLines = new ArrayList<>();
     private final Set<String> peers = ConcurrentHashMap.newKeySet();
+    private final Map<String, List<ConversationMessage>> conversationMessages = new ConcurrentHashMap<>();
+    private final Map<String, String> conversationTitle = new ConcurrentHashMap<>();
+    private final Map<String, String> contextTargetPeer = new ConcurrentHashMap<>();
+    private final Map<String, String> conversationPreview = new ConcurrentHashMap<>();
+    private final Map<String, Integer> conversationUnread = new ConcurrentHashMap<>();
+    private final Map<String, Long> conversationUpdatedAt = new ConcurrentHashMap<>();
     private final List<String> accountIds = new ArrayList<>();
     private final AtomicReference<String> currentPeer = new AtomicReference<>(null);
     private final TextInputState inputState = new TextInputState();
@@ -108,6 +121,7 @@ public final class WeixinCliApp {
     private final AtomicBoolean typingInFlight = new AtomicBoolean(false);
     private final AtomicLong lastTypingAt = new AtomicLong(0L);
     private final AtomicBoolean loginInProgress = new AtomicBoolean(false);
+    private final AtomicLong localContextSeq = new AtomicLong(0L);
 
     private volatile ToolkitRunner runner;
     private volatile WeixinLongPollMonitor monitor;
@@ -126,6 +140,7 @@ public final class WeixinCliApp {
     private volatile String lastMonitorMessage = "";
     private volatile long lastMonitorAt = 0L;
     private volatile int selectedAccountIndex = 0;
+    private volatile int selectedPeerIndex = 0;
 
     public WeixinCliApp(OpenClawWeixinCli.LaunchContext launch) {
         this.launch = launch;
@@ -215,21 +230,31 @@ public final class WeixinCliApp {
             };
         }
 
-        String peerText = mode == UiMode.CHAT ? safe(currentPeer.get(), "(none)") : "-";
+        String peerText;
+        if (mode == UiMode.CHAT) {
+            String current = currentPeer.get();
+            String target = resolveTargetPeer(current);
+            peerText = (target == null || target.isBlank()) ? safe(current, "(none)") : target;
+        } else {
+            peerText = "-";
+        }
         String modeLabel = switch (mode) {
             case ACCOUNT_PICKER -> "account";
             case QR_LOGIN -> "login";
             case CHAT -> "chat";
         };
+        List<String> peerCandidates = mode == UiMode.CHAT ? sortedPeers() : List.of();
+        selectedPeerIndex = clampPeerIndex(selectedPeerIndex, peerCandidates);
 
         List<SlashCommand> slashSuggestions = mode == UiMode.CHAT ? commandSuggestions(chatSuggestionInput()) : List.of();
         List<String> actionLines = buildActionLines(mode, slashSuggestions);
-        boolean showCommandPanel = mode != UiMode.CHAT || !actionLines.isEmpty();
+        boolean showCommandPanel = !actionLines.isEmpty();
         Element inputEditor = textInput(inputState)
             .addClass("input-field")
             .placeholder(inputPlaceholderByMode())
             .showCursor(true)
             .cursorRequiresFocus(false)
+            .focusable(false)
             .onSubmit(this::submitInput)
             .constraint(Constraint.fill());
 
@@ -259,6 +284,18 @@ public final class WeixinCliApp {
                 .focusedBorderColor(PANEL_BORDER_FOCUS)
                 .fill();
             case CHAT -> row(
+                panel(() -> list()
+                    .data(buildContextLines(peerCandidates), UiLine::toElement)
+                    .displayOnly()
+                    .addClass("context-list")
+                    .fill())
+                    .id("context-panel")
+                    .addClass("context-panel")
+                    .title("[ CONTEXT ]")
+                    .rounded()
+                    .borderColor(CONTEXT_BORDER)
+                    .focusedBorderColor(PANEL_BORDER_FOCUS)
+                    .length(30),
                 panel(() -> list()
                     .data(chatLines, ChatBubble::toElement)
                     .displayOnly()
@@ -319,7 +356,7 @@ public final class WeixinCliApp {
                 .rounded()
                 .borderColor(COMMAND_BORDER)
                 .focusedBorderColor(PANEL_BORDER_FOCUS)
-                .length(4));
+                .length(mode == UiMode.CHAT ? 6 : 4));
         }
 
         layout.add(panel(() -> row(
@@ -378,6 +415,24 @@ public final class WeixinCliApp {
                 if (c == 'r') {
                     refreshAccountIds();
                     statusText = "已刷新账号列表";
+                    return EventResult.HANDLED;
+                }
+            }
+        }
+
+        if (mode == UiMode.CHAT && currentInputText().isBlank()) {
+            List<String> candidates = sortedPeers();
+            if (!candidates.isEmpty()) {
+                if (event.isUp() || event.matches(Actions.MOVE_UP)) {
+                    selectedPeerIndex = clampPeerIndex(selectedPeerIndex - 1, candidates);
+                    return EventResult.HANDLED;
+                }
+                if (event.isDown() || event.matches(Actions.MOVE_DOWN)) {
+                    selectedPeerIndex = clampPeerIndex(selectedPeerIndex + 1, candidates);
+                    return EventResult.HANDLED;
+                }
+                if (event.matches(Actions.CONFIRM)) {
+                    selectPeerByIndex(selectedPeerIndex, candidates);
                     return EventResult.HANDLED;
                 }
             }
@@ -539,28 +594,29 @@ public final class WeixinCliApp {
             return;
         }
 
-        if (normalized.startsWith("/") && !normalized.contains("\n")) {
-            handleChatCommand(normalized);
+        if ((normalized.startsWith("/") || normalized.startsWith(".")) && !normalized.contains("\n")) {
+            handleChatCommand(normalizeSlashCommand(normalized));
             return;
         }
 
         OpenClawWeixinSdk currentSdk = sdk;
         String currentAccountId = accountId;
-        String peer = currentPeer.get();
+        String contextId = currentPeer.get();
+        String targetPeer = resolveTargetPeer(contextId);
 
         if (currentSdk == null || currentAccountId == null || currentAccountId.isBlank()) {
             addWarn("SDK 未初始化，请重新登录。");
             return;
         }
-        if (peer == null || peer.isBlank()) {
-            addWarn("请先通过 /to 指定会话对象，或等待对方先发消息。");
+        if (contextId == null || contextId.isBlank() || targetPeer == null || targetPeer.isBlank()) {
+            addWarn("当前窗口未绑定发送对象，请先 /to <userId@im.wechat>。");
             return;
         }
 
-        addOut(normalized);
+        addOut(contextId, normalized);
         ioExecutor.submit(() -> {
             try {
-                String mid = currentSdk.sendText(currentAccountId, peer, normalized);
+                String mid = currentSdk.sendText(currentAccountId, targetPeer, normalized);
                 uiQueue.offer(() -> addSystem("发送成功，messageId=" + mid));
             } catch (Exception ex) {
                 uiQueue.offer(() -> addWarn("发送失败: " + ex.getMessage()));
@@ -686,20 +742,24 @@ public final class WeixinCliApp {
         if (account.userId() != null && !account.userId().isBlank()) {
             peers.add(account.userId());
         }
+        loadPersistedConversations(account.accountId());
+        primeConversationMetadata(peers);
 
         String initialPeer = launch.initialPeer();
         if ((initialPeer == null || initialPeer.isBlank()) && account.userId() != null && !account.userId().isBlank()) {
             initialPeer = account.userId();
         }
         currentPeer.set(initialPeer);
+        alignPeerSelectionToCurrent();
+        syncVisibleChatFromCurrentPeer();
 
-        chatLines.clear();
         logLines.clear();
         addSystem("LangChat Team 出品");
         addSystem((fromLocalAccount ? "已加载本地账号" : "扫码登录成功") + "，accountId=" + account.accountId());
         if (currentPeer.get() != null && !currentPeer.get().isBlank()) {
             addSystem("默认会话对象: " + currentPeer.get());
         }
+        addSystem("上下文切换: ↑/↓ 选择左侧会话，Enter 切换，/new 新建窗口，/to 绑定发送对象");
         addSystem("输入 / 展开命令，Enter 发送，Ctrl+C 或 /quit 退出。");
 
         mode = UiMode.CHAT;
@@ -776,11 +836,13 @@ public final class WeixinCliApp {
         shuttingDown = true;
 
         sendTypingCancelIfNeeded();
+        persistConversations();
         stopMonitor();
         ioExecutor.shutdownNow();
     }
 
     private void handleChatCommand(String line) {
+        line = normalizeSlashCommand(line);
         if ("/quit".equals(line) || "/exit".equals(line)) {
             quit();
             return;
@@ -789,11 +851,28 @@ public final class WeixinCliApp {
             for (SlashCommand cmd : CHAT_COMMANDS) {
                 addSystem(cmd.syntax() + " - " + cmd.description());
             }
+            addSystem("提示: 支持 . 前缀，例如 .logout 等价 /logout。");
             return;
         }
         if ("/clear".equals(line)) {
-            chatLines.clear();
-            addSystem("已清空对话区。");
+            String peer = currentPeer.get();
+            if (peer == null || peer.isBlank()) {
+                chatLines.clear();
+            } else {
+                conversationMessages.put(peer, new ArrayList<>());
+                String defaultPreview = isLocalContext(peer)
+                    ? "未绑定发送对象，使用 /to 绑定"
+                    : "暂无消息";
+                conversationPreview.put(peer, defaultPreview);
+                if (!isLocalContext(peer)) {
+                    conversationTitle.remove(peer);
+                }
+                conversationUpdatedAt.put(peer, System.currentTimeMillis());
+                conversationUnread.put(peer, 0);
+                syncVisibleChatFromCurrentPeer();
+                persistConversations();
+            }
+            addSystem("已清空当前会话对话区。");
             return;
         }
         if ("/login".equals(line)) {
@@ -806,13 +885,15 @@ public final class WeixinCliApp {
         }
         if ("/users".equals(line)) {
             if (peers.isEmpty()) {
-                addSystem("暂无会话对象。可先 /to <userId@im.wechat> 手动指定。");
+                addSystem("暂无会话对象。可先 /new 创建窗口，再 /to <userId@im.wechat> 绑定。");
             } else {
-                peers.stream().sorted(Comparator.naturalOrder()).forEach(peer -> {
+                sortedPeers().forEach(peer -> {
+                    String target = resolveTargetPeer(peer);
+                    String targetSuffix = (target == null || target.isBlank() || peer.equals(target)) ? "" : " -> " + target;
                     if (peer.equals(currentPeer.get())) {
-                        addSystem("* " + peer + " (current)");
+                        addSystem("* " + peer + targetSuffix + " (current)");
                     } else {
-                        addSystem("* " + peer);
+                        addSystem("* " + peer + targetSuffix);
                     }
                 });
             }
@@ -823,16 +904,79 @@ public final class WeixinCliApp {
             addWarn("用法: /to <userId@im.wechat>");
             return;
         }
+        if ("/new".equals(line)) {
+            String newContextId = createLocalContext("新窗口");
+            switchToPeer(newContextId, false);
+            addSystem("已创建本地窗口: " + newContextId + "，请用 /to 绑定发送对象。");
+            return;
+        }
+        if (line.startsWith("/new ")) {
+            String title = line.substring(5).trim();
+            if (title.isBlank()) {
+                addWarn("用法: /new [窗口名]");
+                return;
+            }
+            String newContextId = createLocalContext(title);
+            switchToPeer(newContextId, false);
+            addSystem("已创建本地窗口: " + title + " (" + newContextId + ")，请用 /to 绑定发送对象。");
+            return;
+        }
+        if ("/ctx".equals(line)) {
+            List<String> candidates = sortedPeers();
+            if (candidates.isEmpty()) {
+                addWarn("暂无上下文对象，可先 /new 创建窗口。");
+                return;
+            }
+            selectedPeerIndex = clampPeerIndex(selectedPeerIndex, candidates);
+            addSystem("上下文面板已选中: " + (selectedPeerIndex + 1) + ". " + candidates.get(selectedPeerIndex));
+            return;
+        }
+        if (line.startsWith("/ctx ")) {
+            String value = line.substring(5).trim();
+            if (value.isBlank()) {
+                addWarn("用法: /ctx [序号|contextId]");
+                return;
+            }
+            List<String> candidates = sortedPeers();
+            if (candidates.isEmpty()) {
+                addWarn("暂无上下文对象，可先 /new 创建窗口。");
+                return;
+            }
+            try {
+                int idx = Integer.parseInt(value);
+                if (idx >= 1 && idx <= candidates.size()) {
+                    selectPeerByIndex(idx - 1, candidates);
+                    return;
+                }
+            } catch (NumberFormatException ignore) {
+                // fallback by peer id
+            }
+            int matched = candidates.indexOf(value);
+            if (matched >= 0) {
+                selectPeerByIndex(matched, candidates);
+                return;
+            }
+            addWarn("未找到上下文对象: " + value);
+            return;
+        }
         if (line.startsWith("/to ")) {
             String nextPeer = line.substring(4).trim();
             if (nextPeer.isBlank()) {
                 addWarn("用法: /to <userId@im.wechat>");
                 return;
             }
-            sendTypingCancelIfNeeded();
-            currentPeer.set(nextPeer);
-            peers.add(nextPeer);
-            addSystem("当前会话对象: " + nextPeer);
+            String current = currentPeer.get();
+            if (isLocalContext(current)) {
+                contextTargetPeer.put(current, nextPeer);
+                peers.add(nextPeer);
+                primeConversationMetadata(Set.of(nextPeer, current));
+                conversationUpdatedAt.put(current, System.currentTimeMillis());
+                conversationPreview.putIfAbsent(current, "暂无消息");
+                addSystem("当前窗口已绑定会话对象: " + nextPeer);
+                persistConversations();
+            } else {
+                switchToPeer(nextPeer, true);
+            }
             return;
         }
 
@@ -842,9 +986,10 @@ public final class WeixinCliApp {
                 addWarn("用法: /media <path|url> [caption]");
                 return;
             }
-            String peer = currentPeer.get();
-            if (peer == null || peer.isBlank()) {
-                addWarn("请先通过 /to 指定会话对象，或等待对方先发消息。");
+            String contextId = currentPeer.get();
+            String targetPeer = resolveTargetPeer(contextId);
+            if (contextId == null || contextId.isBlank() || targetPeer == null || targetPeer.isBlank()) {
+                addWarn("当前窗口未绑定发送对象，请先 /to <userId@im.wechat>。");
                 return;
             }
 
@@ -857,10 +1002,10 @@ public final class WeixinCliApp {
 
             String media = parts[1];
             String caption = parts.length >= 3 ? parts[2] : "";
-            addOut("[媒体] " + media + (caption.isBlank() ? "" : "\n说明: " + caption));
+            addOut(contextId, "[媒体] " + media + (caption.isBlank() ? "" : "\n说明: " + caption));
             ioExecutor.submit(() -> {
                 try {
-                    String mid = currentSdk.sendMedia(currentAccountId, peer, media, caption);
+                    String mid = currentSdk.sendMedia(currentAccountId, targetPeer, media, caption);
                     uiQueue.offer(() -> addSystem("媒体发送成功，messageId=" + mid));
                 } catch (Exception ex) {
                     uiQueue.offer(() -> addWarn("发送媒体失败: " + ex.getMessage()));
@@ -926,6 +1071,13 @@ public final class WeixinCliApp {
             currentPeer.set(null);
         }
         peers.clear();
+        conversationMessages.clear();
+        conversationTitle.clear();
+        contextTargetPeer.clear();
+        conversationPreview.clear();
+        conversationUnread.clear();
+        conversationUpdatedAt.clear();
+        chatLines.clear();
     }
 
     private void onInboundEvent(InboundMessageEvent event) {
@@ -936,8 +1088,25 @@ public final class WeixinCliApp {
         if (currentPeer.get() == null || currentPeer.get().isBlank()) {
             currentPeer.set(from);
         }
+        List<String> targets = new ArrayList<>();
+        targets.add(from);
+        contextTargetPeer.forEach((contextId, targetPeer) -> {
+            if (targetPeer != null && targetPeer.equals(from) && !targets.contains(contextId)) {
+                targets.add(contextId);
+            }
+        });
 
-        addIn(body);
+        String current = currentPeer.get();
+        for (String contextId : targets) {
+            addIn(contextId, body);
+            if (!contextId.equals(current)) {
+                conversationUnread.merge(contextId, 1, Integer::sum);
+            } else {
+                conversationUnread.put(contextId, 0);
+            }
+        }
+        alignPeerSelectionToCurrent();
+        syncVisibleChatFromCurrentPeer();
         if (event.hasMedia()) {
             addSystem("媒体已保存: " + event.localMediaPath() + " (" + safe(event.mediaType(), "unknown") + ")");
         }
@@ -946,7 +1115,7 @@ public final class WeixinCliApp {
     private void syncTypingState() {
         OpenClawWeixinSdk currentSdk = sdk;
         String currentAccountId = accountId;
-        String peer = currentPeer.get();
+        String peer = resolveTargetPeer(currentPeer.get());
 
         if (currentSdk == null || currentAccountId == null || currentAccountId.isBlank()) {
             statusText = "SDK 未就绪";
@@ -959,7 +1128,11 @@ public final class WeixinCliApp {
         if (input.isBlank() || peer == null || peer.isBlank()) {
             statusText = "就绪";
             if (typingSent.get()) {
-                sendTypingAsync(peer, false);
+                if (peer == null || peer.isBlank()) {
+                    typingSent.set(false);
+                } else {
+                    sendTypingAsync(peer, false);
+                }
             }
             return;
         }
@@ -978,7 +1151,7 @@ public final class WeixinCliApp {
     private void sendTypingCancelIfNeeded() {
         OpenClawWeixinSdk currentSdk = sdk;
         String currentAccountId = accountId;
-        String peer = currentPeer.get();
+        String peer = resolveTargetPeer(currentPeer.get());
         if (currentSdk == null || currentAccountId == null || currentAccountId.isBlank()) {
             return;
         }
@@ -1047,19 +1220,372 @@ public final class WeixinCliApp {
 
     private static List<SlashCommand> commandSuggestions(String input) {
         String text = input == null ? "" : input.trim();
-        if (!text.startsWith("/")) {
+        if (!(text.startsWith("/") || text.startsWith("."))) {
             return List.of();
         }
-        if ("/".equals(text)) {
+        String normalized = normalizeSlashCommand(text);
+        if ("/".equals(normalized)) {
             return CHAT_COMMANDS;
         }
         List<SlashCommand> out = new ArrayList<>();
         for (SlashCommand cmd : CHAT_COMMANDS) {
-            if (cmd.syntax().startsWith(text)) {
+            if (cmd.syntax().startsWith(normalized)) {
                 out.add(cmd);
             }
         }
         return out;
+    }
+
+    private static String normalizeSlashCommand(String input) {
+        if (input == null || input.isBlank()) {
+            return "";
+        }
+        String trimmed = input.trim();
+        if (trimmed.startsWith(".")) {
+            return "/" + trimmed.substring(1);
+        }
+        return trimmed;
+    }
+
+    private List<String> sortedPeers() {
+        List<String> out = new ArrayList<>(peers);
+        String current = currentPeer.get();
+        if (current != null && !current.isBlank() && !out.contains(current)) {
+            out.add(current);
+        }
+        out.sort((a, b) -> {
+            long ta = conversationUpdatedAt.getOrDefault(a, 0L);
+            long tb = conversationUpdatedAt.getOrDefault(b, 0L);
+            if (ta != tb) {
+                return Long.compare(tb, ta);
+            }
+            return a.compareTo(b);
+        });
+        return out;
+    }
+
+    private int clampPeerIndex(int index, List<String> candidates) {
+        if (candidates == null || candidates.isEmpty()) {
+            return 0;
+        }
+        if (index < 0) {
+            return 0;
+        }
+        if (index >= candidates.size()) {
+            return candidates.size() - 1;
+        }
+        return index;
+    }
+
+    private void alignPeerSelectionToCurrent() {
+        List<String> candidates = sortedPeers();
+        String current = currentPeer.get();
+        if (candidates.isEmpty()) {
+            selectedPeerIndex = 0;
+            return;
+        }
+        if (current == null || current.isBlank()) {
+            selectedPeerIndex = clampPeerIndex(selectedPeerIndex, candidates);
+            return;
+        }
+        int idx = candidates.indexOf(current);
+        selectedPeerIndex = idx >= 0 ? idx : clampPeerIndex(selectedPeerIndex, candidates);
+    }
+
+    private void selectPeerByIndex(int index, List<String> candidates) {
+        if (candidates == null || candidates.isEmpty()) {
+            addWarn("暂无上下文对象，可先 /new 创建窗口。");
+            return;
+        }
+        int clamped = clampPeerIndex(index, candidates);
+        String nextPeer = candidates.get(clamped);
+        switchToPeer(nextPeer, true);
+        selectedPeerIndex = clamped;
+    }
+
+    private List<UiLine> buildContextLines(List<String> candidates) {
+        List<UiLine> out = new ArrayList<>();
+        out.add(UiLine.bold("会话上下文", CYAN));
+        out.add(UiLine.of("", DIM));
+
+        if (candidates == null || candidates.isEmpty()) {
+            out.add(UiLine.of("暂无上下文对象", DIM));
+            out.add(UiLine.of("可用 /new 创建窗口", DIM));
+            return out;
+        }
+
+        String current = currentPeer.get();
+        int selected = clampPeerIndex(selectedPeerIndex, candidates);
+        for (int i = 0; i < candidates.size(); i++) {
+            String peer = candidates.get(i);
+            boolean cursor = i == selected;
+            boolean active = peer.equals(current);
+            String marker = cursor ? ">" : " ";
+            String title = conversationTitle.getOrDefault(peer, displayPeerTitle(peer));
+            String preview = conversationPreview.getOrDefault(peer, "暂无消息");
+            String targetPeer = resolveTargetPeer(peer);
+            String titleWithTarget = title;
+            if (isLocalContext(peer)) {
+                titleWithTarget = targetPeer == null || targetPeer.isBlank()
+                    ? title + " [unbound]"
+                    : title + " -> " + displayPeerTitle(targetPeer);
+            }
+            int unread = conversationUnread.getOrDefault(peer, 0);
+            String suffix = active ? " [current]" : (unread > 0 ? " [" + unread + "]" : "");
+            String line = marker + " " + truncate(titleWithTarget, 22) + suffix;
+            if (cursor || active) {
+                out.add(UiLine.bold(line, BRIGHT));
+            } else {
+                out.add(UiLine.of(line, DIM));
+            }
+            out.add(UiLine.of("  " + truncate(preview, 26), DIM));
+            out.add(UiLine.of("", DIM));
+        }
+        return out;
+    }
+
+    private void switchToPeer(String nextPeer, boolean announce) {
+        if (nextPeer == null || nextPeer.isBlank()) {
+            return;
+        }
+        sendTypingCancelIfNeeded();
+        peers.add(nextPeer);
+        primeConversationMetadata(Set.of(nextPeer));
+        if (!isLocalContext(nextPeer)) {
+            contextTargetPeer.remove(nextPeer);
+        }
+        currentPeer.set(nextPeer);
+        conversationUnread.put(nextPeer, 0);
+        alignPeerSelectionToCurrent();
+        syncVisibleChatFromCurrentPeer();
+        persistConversations();
+        if (announce) {
+            addSystem("当前会话对象: " + nextPeer);
+        }
+    }
+
+    private String createLocalContext(String rawTitle) {
+        String title = (rawTitle == null || rawTitle.isBlank()) ? "新窗口" : rawTitle.strip();
+        String contextId = LOCAL_CONTEXT_PREFIX + localContextSeq.incrementAndGet();
+        peers.add(contextId);
+        conversationTitle.put(contextId, title);
+        conversationPreview.put(contextId, "未绑定发送对象，使用 /to 绑定");
+        conversationUnread.put(contextId, 0);
+        conversationUpdatedAt.put(contextId, System.currentTimeMillis());
+        conversationMessages.put(contextId, new ArrayList<>());
+        return contextId;
+    }
+
+    private boolean isLocalContext(String contextId) {
+        return contextId != null && contextId.startsWith(LOCAL_CONTEXT_PREFIX);
+    }
+
+    private String resolveTargetPeer(String contextId) {
+        if (contextId == null || contextId.isBlank()) {
+            return null;
+        }
+        String bound = contextTargetPeer.get(contextId);
+        if (bound != null && !bound.isBlank()) {
+            return bound;
+        }
+        if (isLocalContext(contextId)) {
+            return null;
+        }
+        return contextId;
+    }
+
+    private void primeConversationMetadata(Set<String> peerSet) {
+        for (String peer : peerSet) {
+            if (peer == null || peer.isBlank()) {
+                continue;
+            }
+            conversationPreview.putIfAbsent(peer, "暂无消息");
+            conversationUnread.putIfAbsent(peer, 0);
+            conversationUpdatedAt.putIfAbsent(peer, 0L);
+            conversationMessages.computeIfAbsent(peer, ignored -> new ArrayList<>());
+        }
+    }
+
+    private void syncVisibleChatFromCurrentPeer() {
+        chatLines.clear();
+        String peer = currentPeer.get();
+        if (peer == null || peer.isBlank()) {
+            return;
+        }
+        List<ConversationMessage> history = conversationMessages.get(peer);
+        if (history == null || history.isEmpty()) {
+            return;
+        }
+        for (ConversationMessage message : history) {
+            appendConversationBubbles(chatLines, message.outbound(), message.content());
+        }
+        trimChatLines();
+    }
+
+    private void loadPersistedConversations(String accountIdValue) {
+        Map<String, FileConversationStore.ConversationSnapshot> persisted = conversationStore.load(accountIdValue);
+        if (persisted.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<String, FileConversationStore.ConversationSnapshot> entry : persisted.entrySet()) {
+            String peer = entry.getKey();
+            if (peer == null || peer.isBlank()) {
+                continue;
+            }
+            if (isLocalContext(peer)) {
+                String suffix = peer.substring(LOCAL_CONTEXT_PREFIX.length());
+                try {
+                    long n = Long.parseLong(suffix);
+                    localContextSeq.updateAndGet(prev -> Math.max(prev, n));
+                } catch (NumberFormatException ignore) {
+                    // ignore invalid context id format
+                }
+            }
+            FileConversationStore.ConversationSnapshot snapshot = entry.getValue();
+            peers.add(peer);
+
+            if (snapshot.title() != null && !snapshot.title().isBlank()) {
+                conversationTitle.put(peer, snapshot.title());
+            }
+            if (snapshot.targetPeer() != null && !snapshot.targetPeer().isBlank()) {
+                contextTargetPeer.put(peer, snapshot.targetPeer());
+            }
+            if (snapshot.preview() != null && !snapshot.preview().isBlank()) {
+                conversationPreview.put(peer, snapshot.preview());
+            }
+            conversationUpdatedAt.put(peer, snapshot.updatedAt());
+            conversationUnread.put(peer, 0);
+
+            List<ConversationMessage> messages = new ArrayList<>();
+            for (FileConversationStore.ConversationMessage message : snapshot.messages()) {
+                String content = message.content() == null ? "" : message.content().strip();
+                if (content.isBlank()) {
+                    continue;
+                }
+                messages.add(new ConversationMessage(message.outbound(), content));
+            }
+            trimConversationHistory(messages);
+            conversationMessages.put(peer, messages);
+        }
+    }
+
+    private void persistConversations() {
+        String currentAccountId = accountId;
+        if (currentAccountId == null || currentAccountId.isBlank()) {
+            return;
+        }
+        Map<String, FileConversationStore.ConversationSnapshot> snapshots = new LinkedHashMap<>();
+        for (String peer : sortedPeers()) {
+            if (peer == null || peer.isBlank()) {
+                continue;
+            }
+            List<ConversationMessage> source = conversationMessages.getOrDefault(peer, List.of());
+            List<FileConversationStore.ConversationMessage> messages = new ArrayList<>(source.size());
+            for (ConversationMessage message : source) {
+                String content = message.content() == null ? "" : message.content().strip();
+                if (content.isBlank()) {
+                    continue;
+                }
+                messages.add(new FileConversationStore.ConversationMessage(message.outbound(), content));
+            }
+
+            String title = conversationTitle.get(peer);
+            String targetPeer = contextTargetPeer.get(peer);
+            String preview = conversationPreview.getOrDefault(peer, "暂无消息");
+            long updatedAt = conversationUpdatedAt.getOrDefault(peer, 0L);
+            snapshots.put(peer, new FileConversationStore.ConversationSnapshot(title, targetPeer, preview, updatedAt, List.copyOf(messages)));
+        }
+        conversationStore.save(currentAccountId, snapshots);
+    }
+
+    private String displayPeerTitle(String peer) {
+        if (peer == null || peer.isBlank()) {
+            return "(unknown)";
+        }
+        int at = peer.indexOf('@');
+        if (at > 0) {
+            return peer.substring(0, at);
+        }
+        return peer;
+    }
+
+    private static String truncate(String text, int max) {
+        if (text == null) {
+            return "";
+        }
+        if (max <= 0 || text.length() <= max) {
+            return text;
+        }
+        if (max == 1) {
+            return "…";
+        }
+        return text.substring(0, max - 1) + "…";
+    }
+
+    private static String firstLine(String content) {
+        if (content == null || content.isBlank()) {
+            return "(空消息)";
+        }
+        String compact = content.replace("\r\n", "\n");
+        int pos = compact.indexOf('\n');
+        String line = pos >= 0 ? compact.substring(0, pos) : compact;
+        return line.strip().isEmpty() ? "(空消息)" : line.strip();
+    }
+
+    private void updateConversationMeta(String peer, String content, boolean outbound) {
+        String line = firstLine(content);
+        conversationTitle.computeIfAbsent(peer, ignored -> line);
+        conversationPreview.put(peer, (outbound ? "你: " : "对方: ") + line);
+        conversationUpdatedAt.put(peer, System.currentTimeMillis());
+    }
+
+    private void appendConversationBubbles(List<ChatBubble> target, boolean outbound, String content) {
+        List<String> wrapped = wrapChatLines(content, CHAT_WRAP_WIDTH);
+        if (outbound) {
+            int width = wrapped.stream().mapToInt(String::length).max().orElse(1) + 2;
+            target.add(ChatBubble.out("  " + " ".repeat(width)));
+            for (String line : wrapped) {
+                String payload = "> " + line;
+                target.add(ChatBubble.out("  " + padRight(payload, width)));
+            }
+            target.add(ChatBubble.out("  " + " ".repeat(width)));
+        } else {
+            target.add(ChatBubble.in("  "));
+            for (String line : wrapped) {
+                target.add(ChatBubble.in("  " + line));
+            }
+            target.add(ChatBubble.in("  "));
+            target.add(ChatBubble.inSeparator("─".repeat(INBOUND_SEPARATOR_WIDTH)));
+        }
+    }
+
+    private static void trimConversationHistory(List<ConversationMessage> history) {
+        if (history.size() <= CONVERSATION_MAX_MESSAGES) {
+            return;
+        }
+        history.subList(0, history.size() - CONVERSATION_MAX_MESSAGES).clear();
+    }
+
+    private void appendChatMessage(String peer, boolean outbound, String content) {
+        if (peer == null || peer.isBlank()) {
+            return;
+        }
+        String normalized = content == null ? "" : content.strip();
+        if (normalized.isBlank()) {
+            normalized = "(空消息)";
+        }
+
+        peers.add(peer);
+        primeConversationMetadata(Set.of(peer));
+        List<ConversationMessage> history = conversationMessages.computeIfAbsent(peer, ignored -> new ArrayList<>());
+        history.add(new ConversationMessage(outbound, normalized));
+        trimConversationHistory(history);
+        updateConversationMeta(peer, normalized, outbound);
+
+        if (peer.equals(currentPeer.get())) {
+            syncVisibleChatFromCurrentPeer();
+        }
+        persistConversations();
     }
 
     private List<UiLine> buildAccountPickerLines() {
@@ -1120,7 +1646,13 @@ public final class WeixinCliApp {
 
     private static List<String> buildChatActionLines(List<SlashCommand> suggestions) {
         if (suggestions.isEmpty()) {
-            return List.of();
+            return List.of(
+                "/help  显示完整命令",
+                "/new [窗口名]  新建本地窗口",
+                "/to <userId>  绑定当前窗口发送对象",
+                "/users  查看窗口/会话",
+                "/logout  注销账号"
+            );
         }
         List<String> out = new ArrayList<>();
         int limit = Math.min(4, suggestions.size());
@@ -1135,7 +1667,7 @@ public final class WeixinCliApp {
         return switch (mode) {
             case ACCOUNT_PICKER -> "输入序号后回车选择，或输入 new / refresh";
             case QR_LOGIN -> "等待扫码自动登录；输入 regen 重试，输入 cancel 返回";
-            case CHAT -> "输入消息，Enter发送，Ctrl+Enter换行，Esc清空，Ctrl+L清屏，Ctrl+C退出，输入 / 查看命令";
+            case CHAT -> "输入消息；/new 新建窗口；/to 绑定发送对象；↑/↓ 选择左侧上下文；输入 / 或 . 查看命令";
         };
     }
 
@@ -1149,38 +1681,12 @@ public final class WeixinCliApp {
         trimLogLines();
     }
 
-    private void addOut(String content) {
-        appendChatMessage(true, content);
+    private void addOut(String peer, String content) {
+        appendChatMessage(peer, true, content);
     }
 
-    private void addIn(String content) {
-        appendChatMessage(false, content);
-    }
-
-    private void appendChatMessage(boolean outbound, String content) {
-        String normalized = content == null ? "" : content.strip();
-        if (normalized.isBlank()) {
-            normalized = "(空消息)";
-        }
-
-        List<String> wrapped = wrapChatLines(normalized, CHAT_WRAP_WIDTH);
-        if (outbound) {
-            int width = wrapped.stream().mapToInt(String::length).max().orElse(1) + 2;
-            chatLines.add(ChatBubble.out("  " + " ".repeat(width)));
-            for (String line : wrapped) {
-                String payload = "> " + line;
-                chatLines.add(ChatBubble.out("  " + padRight(payload, width)));
-            }
-            chatLines.add(ChatBubble.out("  " + " ".repeat(width)));
-        } else {
-            chatLines.add(ChatBubble.in("  "));
-            for (String line : wrapped) {
-                chatLines.add(ChatBubble.in("  " + line));
-            }
-            chatLines.add(ChatBubble.in("  "));
-            chatLines.add(ChatBubble.inSeparator("─".repeat(INBOUND_SEPARATOR_WIDTH)));
-        }
-        trimChatLines();
+    private void addIn(String peer, String content) {
+        appendChatMessage(peer, false, content);
     }
 
     private static List<String> wrapChatLines(String text, int width) {
@@ -1296,6 +1802,16 @@ public final class WeixinCliApp {
         ACCOUNT_PICKER,
         QR_LOGIN,
         CHAT
+    }
+
+    /**
+     * @since 2026-04-21
+     * @author LangChat Team
+     */
+    private record ConversationMessage(
+        boolean outbound,
+        String content
+    ) {
     }
 
     /**

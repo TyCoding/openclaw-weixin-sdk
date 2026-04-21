@@ -51,6 +51,20 @@ Panel {
     border: none;
 }
 
+#context-panel {
+    border-type: rounded;
+    border-color: #476186;
+}
+
+#context-panel:focus {
+    border-type: double;
+    border-color: var(--orange);
+}
+
+#context-panel ListElement {
+    border: none;
+}
+
 #chat-log-panel {
     border-type: rounded;
     border-color: #4f4f4f;

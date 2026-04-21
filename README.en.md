@@ -22,7 +22,6 @@ openclaw-weixin-sdk/
 ├─ pom.xml
 ├─ bin/
 │  ├─ openclaw-weixin
-│  └─ publish-openclaw-weixin-sdk
 ├─ openclaw-weixin-sdk/
 ├─ openclaw-weixin-cli/
 ├─ openclaw-weixin-examples/
@@ -187,6 +186,12 @@ npm run dev
 ```
 
 ## 8. Preview
+
+**Web**
+
+![iShot_2026-04-21_15.40.30](http://cdn.langchat.cn/langchat/imgs/20260421154038671.png)
+
+**CLI**
 
 ![iShot_2026-04-21_15.27.29](http://cdn.langchat.cn/langchat/imgs/20260421152817512.png)
 

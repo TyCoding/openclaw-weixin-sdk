@@ -2,16 +2,28 @@ package cn.langchat.openclaw.weixin.web.backend.api;
 
 import cn.langchat.openclaw.weixin.web.backend.terminal.TerminalSession;
 import cn.langchat.openclaw.weixin.web.backend.terminal.TerminalSessionManager;
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.EncodeHintType;
+import com.google.zxing.qrcode.QRCodeWriter;
+import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
+import com.google.zxing.client.j2se.MatrixToImageWriter;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import org.springframework.http.CacheControl;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * @since 2026-04-21
@@ -30,6 +42,33 @@ public class TerminalSessionController {
     @GetMapping
     public List<TerminalSessionManager.SessionView> listSessions() {
         return sessionManager.listSessions();
+    }
+
+    @GetMapping(value = "/qrcode", produces = MediaType.IMAGE_PNG_VALUE)
+    public ResponseEntity<byte[]> qrcode(
+        @RequestParam("text") @NotBlank String text,
+        @RequestParam(name = "size", required = false, defaultValue = "220") @Min(120) @Max(640) int size
+    ) {
+        String payload = text.trim();
+        if (payload.length() > 4096) {
+            return ResponseEntity.badRequest().build();
+        }
+        try {
+            Map<EncodeHintType, Object> hints = new EnumMap<>(EncodeHintType.class);
+            hints.put(EncodeHintType.ERROR_CORRECTION, ErrorCorrectionLevel.M);
+            hints.put(EncodeHintType.MARGIN, 2);
+
+            var matrix = new QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, size, size, hints);
+            ByteArrayOutputStream output = new ByteArrayOutputStream(size * size / 2);
+            MatrixToImageWriter.writeToStream(matrix, "PNG", output);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setCacheControl(CacheControl.maxAge(1, TimeUnit.MINUTES).cachePrivate().mustRevalidate());
+            headers.setPragma("no-cache");
+            return ResponseEntity.ok().headers(headers).contentType(MediaType.IMAGE_PNG).body(output.toByteArray());
+        } catch (Exception ex) {
+            return ResponseEntity.internalServerError().build();
+        }
     }
 
     @PostMapping

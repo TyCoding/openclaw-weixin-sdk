@@ -77,6 +77,28 @@
 
             <div class="min-h-0 p-2.5 pb-2">
               <div class="h-full rounded border border-neutral-800 overflow-hidden relative bg-neutral-900">
+                <div
+                  v-if="activeQrUrl"
+                  class="absolute right-3 top-3 z-20 w-[220px] rounded-lg border border-neutral-700 bg-neutral-900/95 p-2.5 shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
+                >
+                  <div class="flex items-center gap-2">
+                    <span class="text-[11px] font-semibold tracking-[0.08em] text-sky-300">SCAN QR</span>
+                    <button
+                      class="ml-auto h-5 rounded border border-neutral-700 px-1.5 text-[10px] text-neutral-300 hover:bg-neutral-800"
+                      @click="activeQrUrl = null"
+                    >
+                      Hide
+                    </button>
+                  </div>
+                  <img
+                    :src="qrImageSrc(activeQrUrl)"
+                    alt="wechat-qrcode"
+                    class="mt-2 h-[190px] w-[190px] rounded border border-neutral-700 bg-white p-1"
+                  />
+                  <div class="mt-1.5 break-all text-[10px] leading-snug text-neutral-400">
+                    {{ activeQrUrl }}
+                  </div>
+                </div>
                 <div class="h-full p-2.5">
                   <TerminalViewport
                     :ws-path="activeWsPath"
@@ -111,6 +133,8 @@ const activeSessionId = ref<string | null>(null)
 const activeWsPath = ref<string | null>(null)
 const creating = ref(false)
 const connected = ref(false)
+const activeQrUrl = ref<string | null>(null)
+const outputTail = ref('')
 let pollTimer: number | null = null
 
 /**
@@ -148,6 +172,8 @@ function attachSession(sessionId: string): void {
   }
   activeSessionId.value = sessionId
   activeWsPath.value = buildWsPath(sessionId)
+  activeQrUrl.value = null
+  outputTail.value = ''
   pushEvent('info', `attached session ${sessionId}`)
 }
 
@@ -189,6 +215,8 @@ async function createSession(mode: 'chat' | 'login' = 'chat'): Promise<void> {
     await refreshSessions(false)
     activeSessionId.value = created.sessionId
     activeWsPath.value = created.wsPath || buildWsPath(created.sessionId)
+    activeQrUrl.value = null
+    outputTail.value = ''
     pushEvent('success', `created ${mode} session ${created.sessionId}`)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -217,6 +245,8 @@ async function closeActiveSession(): Promise<void> {
     activeSessionId.value = null
     activeWsPath.value = null
     connected.value = false
+    activeQrUrl.value = null
+    outputTail.value = ''
     await refreshSessions(false)
   }
 }
@@ -242,9 +272,25 @@ function onTerminalError(message: string): void {
  * @author LangChat Team
  */
 function onTerminalOutput(text: string): void {
+  outputTail.value = (outputTail.value + text).slice(-8192)
+  const match = outputTail.value.match(/https?:\/\/liteapp\.weixin\.qq\.com\/q\/[^\s"'<>]+/i)
+  if (match?.[0]) {
+    activeQrUrl.value = match[0]
+  }
+  if (/登录成功|已启动会话|accountId=.+/i.test(text)) {
+    activeQrUrl.value = null
+  }
   if (text.includes('[session detached]')) {
     pushEvent('warn', 'terminal detached')
   }
+}
+
+/**
+ * @since 2026-04-21
+ * @author LangChat Team
+ */
+function qrImageSrc(url: string): string {
+  return `/api/terminal/sessions/qrcode?size=220&text=${encodeURIComponent(url)}`
 }
 
 onMounted(async () => {

@@ -66,13 +66,14 @@ mvn -DskipTests -pl openclaw-weixin-cli -am package
 ```bash
 ./bin/openclaw-weixin chat
 ./bin/openclaw-weixin login
+./bin/openclaw-weixin rebuild
 ./bin/openclaw-weixin help
 ```
 
 或者直接运行 fat-jar：
 
 ```bash
-java -jar target/openclaw-weixin-cli-0.1.0-SNAPSHOT-all.jar chat
+java -jar target/openclaw-weixin-cli-0.1.0-all.jar chat
 ```
 
 ## 聊天命令

@@ -1,10 +1,11 @@
 :root {
     --fg: #e3e3e3;
     --fg-dim: #8d8d8d;
-    --orange: #f29233;
-    --orange-soft: #d87b2a;
+    --orange: #6aa9ff;
+    --orange-soft: #4e8fdc;
+    --orange-deep: #3f5f86;
     --green: #79c07a;
-    --yellow: #efc15a;
+    --yellow: #8fb7e8;
     --red: #d97575;
 }
 
@@ -14,7 +15,7 @@
 
 Panel {
     border-type: rounded;
-    border-color: #3a4658;
+    border-color: #3f3f3f;
 }
 
 #header-panel {
@@ -24,7 +25,7 @@ Panel {
 
 #chat-panel {
     border-type: rounded;
-    border-color: #5a4c40;
+    border-color: #3f4e64;
 }
 
 #chat-panel:focus {
@@ -38,7 +39,12 @@ Panel {
 
 #chat-main-panel {
     border-type: rounded;
-    border-color: #5a4c40;
+    border-color: var(--orange-deep);
+}
+
+#chat-main-panel:focus {
+    border-type: double;
+    border-color: var(--orange);
 }
 
 #chat-main-panel ListElement {
@@ -47,7 +53,7 @@ Panel {
 
 #chat-log-panel {
     border-type: rounded;
-    border-color: #4a4a4a;
+    border-color: #4f4f4f;
 }
 
 #chat-log-panel ListElement {
@@ -56,7 +62,12 @@ Panel {
 
 #command-panel {
     border-type: rounded;
-    border-color: #4a4a4a;
+    border-color: var(--orange-deep);
+}
+
+#command-panel:focus {
+    border-type: double;
+    border-color: var(--orange);
 }
 
 #command-panel ListElement {
@@ -64,7 +75,7 @@ Panel {
 }
 
 #command-panel ListElement-item:selected {
-    color: #ffb066;
+    color: #9fc5ff;
 }
 
 #input-panel {

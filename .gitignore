@@ -13,5 +13,9 @@
 # Logs
 *.log
 
+# Frontend
+**/node_modules/
+**/dist/
+
 # Runtime state (override if you want to commit test fixtures)
 .openclaw/

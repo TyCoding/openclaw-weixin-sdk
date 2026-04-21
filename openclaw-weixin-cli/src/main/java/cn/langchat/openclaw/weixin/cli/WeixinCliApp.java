@@ -60,17 +60,24 @@ public final class WeixinCliApp {
     private static final int QR_QUIET_ZONE = 1;
     private static final String APP_TITLE = "LangChat OpenClaw Weixin";
 
-    private static final Color CYAN = Color.rgb(242, 146, 51);
+    private static final Color CYAN = Color.rgb(120, 183, 255);
     private static final Color GREEN = Color.rgb(46, 204, 113);
-    private static final Color YELLOW = Color.rgb(241, 196, 15);
+    private static final Color YELLOW = Color.rgb(146, 181, 228);
     private static final Color RED = Color.rgb(231, 76, 60);
-    private static final Color MAGENTA = Color.rgb(224, 124, 36);
+    private static final Color MAGENTA = Color.rgb(107, 154, 224);
     private static final Color DIM = Color.rgb(127, 140, 141);
     private static final Color BRIGHT = Color.rgb(236, 240, 241);
     private static final Color BUBBLE_OUT_BG = Color.rgb(74, 74, 74);
     private static final Color BUBBLE_OUT_FG = Color.rgb(241, 241, 241);
     private static final Color BUBBLE_IN_FG = Color.rgb(214, 214, 214);
-    private static final int CHAT_WRAP_WIDTH = 56;
+    private static final Color PANEL_BORDER = Color.rgb(66, 78, 96);
+    private static final Color PANEL_BORDER_FOCUS = Color.rgb(120, 183, 255);
+    private static final Color HEADER_BORDER = Color.rgb(78, 88, 102);
+    private static final Color LOG_BORDER = Color.rgb(72, 82, 95);
+    private static final Color COMMAND_BORDER = Color.rgb(82, 100, 128);
+    private static final Color INPUT_BORDER = Color.rgb(96, 126, 170);
+    private static final int CHAT_WRAP_WIDTH = 72;
+    private static final int INBOUND_SEPARATOR_WIDTH = 300;
 
     private static final List<SlashCommand> CHAT_COMMANDS = List.of(
         new SlashCommand("/help", "显示帮助"),
@@ -217,6 +224,7 @@ public final class WeixinCliApp {
 
         List<SlashCommand> slashSuggestions = mode == UiMode.CHAT ? commandSuggestions(chatSuggestionInput()) : List.of();
         List<String> actionLines = buildActionLines(mode, slashSuggestions);
+        boolean showCommandPanel = mode != UiMode.CHAT || !actionLines.isEmpty();
         Element inputEditor = textInput(inputState)
             .addClass("input-field")
             .placeholder(inputPlaceholderByMode())
@@ -233,10 +241,10 @@ public final class WeixinCliApp {
                 .fill())
                 .id("chat-panel")
                 .addClass("chat-panel")
-                .title("Account Selector")
+                .title("[ ACCOUNT ]")
                 .rounded()
-                .borderColor(Color.rgb(88, 76, 64))
-                .focusedBorderColor(Color.rgb(242, 146, 51))
+                .borderColor(PANEL_BORDER)
+                .focusedBorderColor(PANEL_BORDER_FOCUS)
                 .fill();
             case QR_LOGIN -> panel(() -> list()
                 .data(buildQrLinesForUi(), UiLine::toElement)
@@ -245,10 +253,10 @@ public final class WeixinCliApp {
                 .fill())
                 .id("chat-panel")
                 .addClass("chat-panel")
-                .title("QR Login")
+                .title("[ QR LOGIN ]")
                 .rounded()
-                .borderColor(Color.rgb(88, 76, 64))
-                .focusedBorderColor(Color.rgb(242, 146, 51))
+                .borderColor(PANEL_BORDER)
+                .focusedBorderColor(PANEL_BORDER_FOCUS)
                 .fill();
             case CHAT -> row(
                 panel(() -> list()
@@ -259,10 +267,10 @@ public final class WeixinCliApp {
                     .fill())
                     .id("chat-main-panel")
                     .addClass("chat-main-panel")
-                    .title("Conversation")
+                    .title("[ CHAT ]")
                     .rounded()
-                    .borderColor(Color.rgb(88, 76, 64))
-                    .focusedBorderColor(Color.rgb(242, 146, 51))
+                    .borderColor(PANEL_BORDER)
+                    .focusedBorderColor(PANEL_BORDER_FOCUS)
                     .fill(),
                 panel(() -> list()
                     .data(logLines, UiLine::toElement)
@@ -272,16 +280,17 @@ public final class WeixinCliApp {
                     .fill())
                     .id("chat-log-panel")
                     .addClass("chat-log-panel")
-                    .title("Logs")
+                    .title("[ LOGS ]")
                     .rounded()
-                    .borderColor(Color.rgb(66, 66, 66))
-                    .focusedBorderColor(Color.rgb(128, 128, 128))
+                    .borderColor(LOG_BORDER)
+                    .focusedBorderColor(PANEL_BORDER_FOCUS)
                     .length(38)
             ).fill();
         };
 
-        return column(
-            panel(() -> row(
+        List<Element> layout = new ArrayList<>();
+
+        layout.add(panel(() -> row(
                 text(" " + APP_TITLE + " ").fg(BRIGHT).bold(),
                 text("mode=" + modeLabel).fg(DIM),
                 spacer(),
@@ -291,52 +300,41 @@ public final class WeixinCliApp {
                 .id("header-panel")
                 .addClass("header-panel")
                 .rounded()
-                .borderColor(Color.rgb(78, 78, 78))
-                .length(3),
+                .borderColor(HEADER_BORDER)
+                .length(3));
 
-            centerArea,
+        layout.add(centerArea);
 
-            panel(() -> list()
+        if (showCommandPanel) {
+            layout.add(panel(() -> list()
                 .data(actionLines, line -> line.startsWith("/")
-                    ? text(" " + line).fg(CYAN)
+                    ? text(" " + line).fg(CYAN).bold()
                     : text(" " + line).fg(DIM))
                 .displayOnly()
                 .addClass("command-list")
                 .fill())
                 .id("command-panel")
                 .addClass("command-panel")
-                .title("Action Hints")
+                .title("[ COMMANDS ]")
                 .rounded()
-                .borderColor(Color.rgb(78, 78, 78))
-                .length(5),
+                .borderColor(COMMAND_BORDER)
+                .focusedBorderColor(PANEL_BORDER_FOCUS)
+                .length(4));
+        }
 
-            panel(() -> column(
-                row(
-                    text(" stage ").fg(DIM),
-                    text(switch (mode) {
-                        case ACCOUNT_PICKER -> "请选择账号";
-                        case QR_LOGIN -> "扫码登录";
-                        case CHAT -> "聊天中";
-                    }).fg(CYAN).bold(),
-                    spacer(),
-                    text(now()).fg(DIM)
-                ).length(1),
-                row(
-                    text(" hint ").fg(DIM),
-                    text(inputHintByMode()).fg(DIM)
-                ).length(1),
-                row(
-                    text(" > ").fg(MAGENTA).bold(),
-                    inputEditor
-                ).length(1)
-            ))
-                .id("input-panel")
-                .addClass("input-panel")
-                .doubleBorder()
-                .borderColor(Color.rgb(224, 124, 36))
-                .focusedBorderColor(Color.rgb(242, 146, 51))
-                .length(6)
-        )
+        layout.add(panel(() -> row(
+            text(" > ").fg(MAGENTA).bold(),
+            inputEditor
+        ).length(1))
+            .id("input-panel")
+            .addClass("input-panel")
+            .title("[ INPUT ]")
+            .doubleBorder()
+            .borderColor(INPUT_BORDER)
+            .focusedBorderColor(PANEL_BORDER_FOCUS)
+            .length(3));
+
+        return column(layout.toArray(Element[]::new))
             .id("main-root")
             .addClass("main-root")
             .focusable()
@@ -1122,13 +1120,10 @@ public final class WeixinCliApp {
 
     private static List<String> buildChatActionLines(List<SlashCommand> suggestions) {
         if (suggestions.isEmpty()) {
-            return List.of(
-                "输入 / 展开命令面板",
-                "可用: /help /users /to /media /login /logout /clear /quit"
-            );
+            return List.of();
         }
         List<String> out = new ArrayList<>();
-        int limit = Math.min(3, suggestions.size());
+        int limit = Math.min(4, suggestions.size());
         for (int i = 0; i < limit; i++) {
             SlashCommand cmd = suggestions.get(i);
             out.add(cmd.syntax() + "  " + cmd.description());
@@ -1138,19 +1133,9 @@ public final class WeixinCliApp {
 
     private String inputPlaceholderByMode() {
         return switch (mode) {
-            case ACCOUNT_PICKER -> "回车选择当前账号，或输入序号/new/refresh";
-            case QR_LOGIN -> "输入 regen 重试，输入 cancel 返回";
-            case CHAT -> "输入消息；Enter发送，Ctrl+Enter换行，/命令";
-        };
-    }
-
-    private String inputHintByMode() {
-        return switch (mode) {
-            case ACCOUNT_PICKER -> "Enter 选择  |  new 扫码  |  refresh 刷新";
-            case QR_LOGIN -> "扫码后自动登录  |  regen 重试  |  cancel 返回";
-            case CHAT -> chatDraftLines.isEmpty()
-                ? "Enter发送  Ctrl+Enter换行  Esc清空  Ctrl+L清屏  Ctrl+C退出"
-                : "已追加 " + chatDraftLines.size() + " 行  |  Enter发送  Ctrl+Enter继续换行";
+            case ACCOUNT_PICKER -> "输入序号后回车选择，或输入 new / refresh";
+            case QR_LOGIN -> "等待扫码自动登录；输入 regen 重试，输入 cancel 返回";
+            case CHAT -> "输入消息，Enter发送，Ctrl+Enter换行，Esc清空，Ctrl+L清屏，Ctrl+C退出，输入 / 查看命令";
         };
     }
 
@@ -1179,22 +1164,22 @@ public final class WeixinCliApp {
         }
 
         List<String> wrapped = wrapChatLines(normalized, CHAT_WRAP_WIDTH);
-        chatLines.add(ChatBubble.gap());
         if (outbound) {
-            int width = wrapped.stream().mapToInt(String::length).max().orElse(1);
-            int paddedWidth = width + 4;
-            chatLines.add(ChatBubble.out("  " + " ".repeat(paddedWidth)));
+            int width = wrapped.stream().mapToInt(String::length).max().orElse(1) + 2;
+            chatLines.add(ChatBubble.out("  " + " ".repeat(width)));
             for (String line : wrapped) {
                 String payload = "> " + line;
-                chatLines.add(ChatBubble.out("  " + padRight(payload, paddedWidth)));
+                chatLines.add(ChatBubble.out("  " + padRight(payload, width)));
             }
-            chatLines.add(ChatBubble.out("  " + " ".repeat(paddedWidth)));
+            chatLines.add(ChatBubble.out("  " + " ".repeat(width)));
         } else {
+            chatLines.add(ChatBubble.in("  "));
             for (String line : wrapped) {
                 chatLines.add(ChatBubble.in("  " + line));
             }
+            chatLines.add(ChatBubble.in("  "));
+            chatLines.add(ChatBubble.inSeparator("─".repeat(INBOUND_SEPARATOR_WIDTH)));
         }
-        chatLines.add(ChatBubble.gap());
         trimChatLines();
     }
 
@@ -1333,8 +1318,8 @@ public final class WeixinCliApp {
             return new ChatBubble(content, BUBBLE_IN_FG, null);
         }
 
-        static ChatBubble gap() {
-            return new ChatBubble(" ", DIM, null);
+        static ChatBubble inSeparator(String content) {
+            return new ChatBubble(content, DIM, null);
         }
 
         StyledElement<?> toElement() {

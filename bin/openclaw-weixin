@@ -4,20 +4,73 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 MAVEN_REPO_LOCAL="${OPENCLAW_WEIXIN_M2:-$ROOT/.m2/repository}"
+CLI_MODULE="openclaw-weixin-cli"
+
+build_cli() {
+  local force_update="${1:-false}"
+  if [[ "$force_update" == "true" ]]; then
+    mvn -U -q -Dmaven.repo.local="$MAVEN_REPO_LOCAL" -DskipTests -pl "$CLI_MODULE" -am clean package
+    return
+  fi
+  mvn -q -Dmaven.repo.local="$MAVEN_REPO_LOCAL" -DskipTests -pl "$CLI_MODULE" -am clean package
+}
+
+resolve_cli_jar() {
+  find "$CLI_MODULE/target" -maxdepth 1 -type f -name "${CLI_MODULE}-*-all.jar" | sort | tail -n 1
+}
+
+validate_cli_jar() {
+  local jar_path="$1"
+  if [[ -z "$jar_path" || ! -f "$jar_path" ]]; then
+    return 1
+  fi
+  if command -v rg >/dev/null 2>&1; then
+    if ! jar tf "$jar_path" | rg -q "dev/tamboui/tui/event/KeyModifiers.class"; then
+      return 1
+    fi
+  else
+    if ! jar tf "$jar_path" | grep -Fq "dev/tamboui/tui/event/KeyModifiers.class"; then
+      return 1
+    fi
+  fi
+  return 0
+}
 
 if [[ "${1:-}" == "help" || "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  mvn -q -Dmaven.repo.local="$MAVEN_REPO_LOCAL" -DskipTests -pl openclaw-weixin-cli -am package >/dev/null
-  JAR="$(ls -1 openclaw-weixin-cli/target/openclaw-weixin-cli-*-all.jar | tail -n 1)"
+  build_cli false >/dev/null
+  JAR="$(resolve_cli_jar)"
+  if ! validate_cli_jar "$JAR"; then
+    build_cli true >/dev/null
+    JAR="$(resolve_cli_jar)"
+  fi
   exec java -jar "$JAR" help
 fi
 
 if [[ $# -eq 0 ]]; then
   set -- chat
+elif [[ "$1" == "rebuild" ]]; then
+  build_cli true
+  JAR="$(resolve_cli_jar)"
+  if ! validate_cli_jar "$JAR"; then
+    echo "ERROR: CLI fat-jar is invalid after rebuild. Please check Maven dependencies."
+    exit 1
+  fi
+  echo "Rebuild completed: $JAR"
+  exit 0
 elif [[ "$1" == --* ]]; then
   set -- chat "$@"
 fi
 
-mvn -q -Dmaven.repo.local="$MAVEN_REPO_LOCAL" -DskipTests -pl openclaw-weixin-cli -am package
-JAR="$(ls -1 openclaw-weixin-cli/target/openclaw-weixin-cli-*-all.jar | tail -n 1)"
+build_cli false
+JAR="$(resolve_cli_jar)"
+if ! validate_cli_jar "$JAR"; then
+  echo "Detected incomplete CLI fat-jar, forcing full update rebuild..."
+  build_cli true
+  JAR="$(resolve_cli_jar)"
+fi
+if ! validate_cli_jar "$JAR"; then
+  echo "ERROR: Unable to build a valid CLI fat-jar."
+  exit 1
+fi
 
 exec java -jar "$JAR" "$@"

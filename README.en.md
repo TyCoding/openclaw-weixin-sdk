@@ -1,6 +1,6 @@
 # openclaw-weixin-sdk
 
-Repository maintained by LangChat Team for Weixin OpenClaw Java integration (SDK + CLI + Examples).
+Repository maintained by LangChat Team for Weixin OpenClaw Java integration (SDK + CLI + Examples + Web Terminal).
 
 中文版: [README.md](./README.md)
 
@@ -11,6 +11,7 @@ This repository is centered on the **Weixin OpenClaw plugin over iLinkAI protoco
 - Java protocol SDK (JDK 17+)
 - Standalone terminal CLI/TUI client
 - Example module for quick onboarding and tests
+- Web Terminal split architecture (Spring Boot backend + Vue frontend)
 
 ## 2. Repository Layout
 
@@ -24,7 +25,9 @@ openclaw-weixin-sdk/
 │  └─ publish-openclaw-weixin-sdk
 ├─ openclaw-weixin-sdk/
 ├─ openclaw-weixin-cli/
-└─ openclaw-weixin-examples/
+├─ openclaw-weixin-examples/
+├─ openclaw-weixin-web-backend/
+└─ openclaw-weixin-web-frontend/
 ```
 
 ## 3. Weixin OpenClaw Plugin and iLinkAI Protocol
@@ -155,6 +158,7 @@ if (login.connected()) {
 
 ```bash
 ./bin/openclaw-weixin chat
+./bin/openclaw-weixin rebuild
 ```
 
 ## 6. Build and Test
@@ -163,15 +167,32 @@ if (login.connected()) {
 mvn -q -f openclaw-weixin-sdk/pom.xml -DskipTests compile
 mvn -q -f openclaw-weixin-cli/pom.xml -DskipTests package
 mvn -q -f openclaw-weixin-examples/pom.xml test
+mvn -q -f openclaw-weixin-web-backend/pom.xml -DskipTests package
 ```
 
-## 7. Publish to Maven Central
+## 7. Web Terminal (Scheme 1)
+
+Start backend:
+
+```bash
+mvn -pl openclaw-weixin-web-backend spring-boot:run
+```
+
+Start frontend:
+
+```bash
+cd openclaw-weixin-web-frontend
+npm install
+npm run dev
+```
+
+## 8. Publish to Maven Central
 
 ```bash
 ./bin/publish-openclaw-weixin-sdk
 ```
 
-## 8. Boundary
+## 9. Boundary
 
 - SDK handles iLinkAI transport + protocol state continuity.
 - SDK does not implement business-level message history/orchestration.

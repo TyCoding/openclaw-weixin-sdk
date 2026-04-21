@@ -14,7 +14,10 @@ public final class OpenClawWeixinCli {
     }
 
     public static void main(String[] args) {
+        installUncaughtHandler();
+        Thread.currentThread().setContextClassLoader(OpenClawWeixinCli.class.getClassLoader());
         try {
+            verifyTambouiRuntime();
             new OpenClawWeixinCli().run(args);
         } catch (Exception ex) {
             System.err.println("ERROR: " + ex.getMessage());
@@ -34,6 +37,7 @@ public final class OpenClawWeixinCli {
         switch (command) {
             case "chat" -> runChat(opts);
             case "login" -> runLogin(opts);
+            case "rebuild" -> throw new IllegalArgumentException("rebuild is a shell command, run: ./bin/openclaw-weixin rebuild");
             default -> throw new IllegalArgumentException("unknown command: " + command);
         }
     }
@@ -79,7 +83,52 @@ public final class OpenClawWeixinCli {
         System.out.println("Usage:");
         System.out.println("  openclaw-weixin chat [--account-id <id>] [--to <userId@im.wechat>] [--new] [--base-url <url>] [--cdn-base-url <url>]");
         System.out.println("  openclaw-weixin login [--account-id <id>] [--base-url <url>] [--cdn-base-url <url>]");
+        System.out.println("  openclaw-weixin rebuild");
         System.out.println("  openclaw-weixin help");
+    }
+
+    private static void verifyTambouiRuntime() {
+        requireClass("dev.tamboui.tui.event.EventParser");
+        requireClass("dev.tamboui.tui.event.KeyModifiers");
+    }
+
+    private static void requireClass(String className) {
+        try {
+            Class.forName(className, false, OpenClawWeixinCli.class.getClassLoader());
+        } catch (ClassNotFoundException ex) {
+            throw new IllegalStateException(
+                "Missing runtime class: " + className
+                    + ". Rebuild CLI with: ./bin/openclaw-weixin rebuild",
+                ex
+            );
+        }
+    }
+
+    private static void installUncaughtHandler() {
+        Thread.setDefaultUncaughtExceptionHandler((thread, error) -> {
+            if (isMissingTambouiClass(error)) {
+                System.err.println("ERROR: Missing TamboUI runtime class. Try: ./bin/openclaw-weixin rebuild");
+                System.exit(130);
+                return;
+            }
+            System.err.println("ERROR: Uncaught exception in thread " + thread.getName() + ": " + error.getMessage());
+            error.printStackTrace(System.err);
+        });
+    }
+
+    private static boolean isMissingTambouiClass(Throwable error) {
+        if (!(error instanceof NoClassDefFoundError noClassDef)) {
+            return false;
+        }
+        String msg = noClassDef.getMessage();
+        if (msg != null && msg.contains("dev/tamboui/")) {
+            return true;
+        }
+        Throwable cause = noClassDef.getCause();
+        if (cause instanceof ClassNotFoundException cnf && cnf.getMessage() != null) {
+            return cnf.getMessage().contains("dev.tamboui.");
+        }
+        return false;
     }
 
     /**

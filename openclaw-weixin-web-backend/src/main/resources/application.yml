@@ -1,0 +1,18 @@
+server:
+  port: 18080
+
+spring:
+  application:
+    name: openclaw-weixin-web-backend
+
+openclaw:
+  web:
+    terminal:
+      workspace-dir: ${OPENCLAW_WEB_WORKSPACE_DIR:${user.dir}}
+      command:
+        - /bin/zsh
+        - -lc
+        - ./bin/openclaw-weixin chat
+      default-cols: 140
+      default-rows: 40
+      session-idle-timeout-ms: 28800000

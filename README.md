@@ -1,6 +1,6 @@
 # openclaw-weixin-sdk
 
-LangChat Team 维护的微信 OpenClaw Java SDK 仓库（SDK + CLI + Examples）。
+LangChat Team 维护的微信 OpenClaw Java SDK 仓库（SDK + CLI + Examples + Web Terminal）。
 
 English version: [README.en.md](./README.en.md)
 
@@ -11,6 +11,7 @@ English version: [README.en.md](./README.en.md)
 - 用 Java（JDK 17+）实现可复用的协议 SDK
 - 提供独立 CLI/TUI 工具用于实战接入
 - 提供 examples 模块用于快速上手与测试
+- 提供前后端分离的 Web Terminal 方案（Spring Boot + Vue3 + xterm.js）
 
 ## 2. 目录说明
 
@@ -29,9 +30,11 @@ openclaw-weixin-sdk/
 ├─ openclaw-weixin-cli/                # 独立 TUI CLI 项目
 │  ├─ README.md
 │  └─ README.zh-CN.md
-└─ openclaw-weixin-examples/           # SDK 示例与测试
+├─ openclaw-weixin-examples/           # SDK 示例与测试
+├─ openclaw-weixin-web-backend/        # Web Terminal 后端（Spring Boot 3）
+└─ openclaw-weixin-web-frontend/       # Web Terminal 前端（Vue3 + Tailwind + xterm.js）
    ├─ README.md
-   └─ README.zh-CN.md
+   └─ src/*
 ```
 
 ## 3. 微信 OpenClaw 插件与 iLinkAI 协议
@@ -180,6 +183,7 @@ public class QuickStart {
 
 ```bash
 ./bin/openclaw-weixin chat
+./bin/openclaw-weixin rebuild
 ```
 
 ## 6. 构建与测试
@@ -193,9 +197,28 @@ mvn -q -f openclaw-weixin-cli/pom.xml -DskipTests package
 
 # Examples
 mvn -q -f openclaw-weixin-examples/pom.xml test
+
+# Web Backend
+mvn -q -f openclaw-weixin-web-backend/pom.xml -DskipTests package
 ```
 
-## 7. 自动化发布 Maven Central
+## 7. Web Terminal（方案1）
+
+先启动后端：
+
+```bash
+mvn -pl openclaw-weixin-web-backend spring-boot:run
+```
+
+再启动前端：
+
+```bash
+cd openclaw-weixin-web-frontend
+npm install
+npm run dev
+```
+
+## 8. 自动化发布 Maven Central
 
 ```bash
 ./bin/publish-openclaw-weixin-sdk
@@ -209,14 +232,16 @@ mvn -q -f openclaw-weixin-examples/pom.xml test
 - `--mvn <path>`
 - `--server-id <id>`
 
-## 8. 边界说明
+## 9. 边界说明
 
 - SDK 负责 iLinkAI 协议传输与协议状态维护（账号、`context_token`、`get_updates_buf`）。
 - SDK 不负责业务历史消息存档与应用层编排。
 - `sendTextStream(...)` 是分片发送能力，不是 LLM token 回调流。
 
-## 9. 子模块文档
+## 10. 子模块文档
 
 - SDK: `openclaw-weixin-sdk/README.md` / `openclaw-weixin-sdk/README.zh-CN.md`
 - CLI: `openclaw-weixin-cli/README.md` / `openclaw-weixin-cli/README.zh-CN.md`
 - Examples: `openclaw-weixin-examples/README.md` / `openclaw-weixin-examples/README.zh-CN.md`
+- Web Backend: `openclaw-weixin-web-backend/README.md` / `openclaw-weixin-web-backend/README.zh-CN.md`
+- Web Frontend: `openclaw-weixin-web-frontend/README.md` / `openclaw-weixin-web-frontend/README.zh-CN.md`
